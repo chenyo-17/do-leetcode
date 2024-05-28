@@ -1,0 +1,10 @@
+[package]
+name = "leetcode"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+
+[[bin]]
+name = "3165"
+path = "src/bin/3165.rs"
