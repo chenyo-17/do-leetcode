@@ -1,76 +1,135 @@
 #![allow(dead_code)]
 
 use std::cmp::max;
-use std::collections::HashMap;
 
-type Cache = HashMap<i32, i32>;
-
-/// Return the maximum subsequence sum of the `arr[:right+1]`
-/// Not used in `main`, just for reference
-fn max_subseq_sum(nums: &Vec<i32>, right: i32, cache: &mut Cache) -> i32 {
-    if let Some(&v) = cache.get(&right) {
-        return v;
-    }
-    if right == 0 {
-        let sum_max = max(0, nums[0]);
-        cache.insert(right, sum_max);
-        return sum_max;
-    }
-    if right < 0 {
-        return 0;
-    }
-
-    let sub_max = max_subseq_sum(nums, right - 1, cache);
-    let sum_max = max(sub_max + nums[right as usize], sub_max);
-    cache.insert(right, sum_max);
-    sum_max
+/// A segment tree node to store the maximum sequence sum with no adjacent (MSSNA).
+struct TreeNode {
+    /// The range of the current node
+    range: (usize, usize),
+    /// The left child node
+    left: Option<Box<TreeNode>>,
+    /// The right child node
+    right: Option<Box<TreeNode>>,
+    /// Store different MSSNA values
+    /// `max_sums[0]`: MSSNA including both left and right range ends
+    /// `max_sums[1]`: MSSNA including only left range end
+    /// `max_sums[2]`: MSSNA including only right range end
+    /// `max_sums[3]`: MSSNA excluding both left and right range ends
+    max_sums: Vec<i32>,
 }
 
-/// Return the maximum subsequence sum of the `arr[:right+1]` with no adjacent elements
-fn max_subseq_sum_no_adjacent(nums: &Vec<i32>, right: i32, cache: &mut Cache) -> i32 {
-    if let Some(&v) = cache.get(&right) {
-        return v;
-    }
-    if right == 0 {
-        let sum_max = max(0, nums[0]);
-        cache.insert(right, sum_max);
-        return sum_max;
-    }
-    if right < 0 {
-        return 0;
+impl TreeNode {
+    /// Recursively construct the segment tree and return the root node
+    pub fn construct(nums: &Vec<i32>, left: usize, right: usize) -> TreeNode {
+        // reach the leaf node
+        if left == right {
+            return TreeNode {
+                range: (left, right),
+                left: None,
+                right: None,
+                max_sums: vec![max(0, nums[left]), 0, 0, 0],
+            };
+        }
+        let mid = (left + right) / 2;
+        let left_node = TreeNode::construct(nums, left, mid);
+        let right_node = TreeNode::construct(nums, mid + 1, right);
+
+        TreeNode {
+            max_sums: compute_max_sums(&left_node, &right_node),
+            range: (left, right),
+            left: Some(Box::new(left_node)),
+            right: Some(Box::new(right_node)),
+        }
     }
 
-    // either include the `right` element, then cannot include `right-1`
-    // or exclude the `right` element
-    let sum_1 = max_subseq_sum_no_adjacent(nums, right - 2, cache) + nums[right as usize];
-    let sum_2 = max_subseq_sum_no_adjacent(nums, right - 1, cache);
+    /// Returns the maximum subsequence sum of the current node
+    pub fn query(&self) -> i32 {
+        max(
+            max(self.max_sums[0], self.max_sums[1]),
+            max(self.max_sums[2], self.max_sums[3]),
+        )
+    }
 
-    let sum_max = max(sum_1, sum_2);
-    cache.insert(right, sum_max);
-    sum_max
+    /// Recursively the value of the `idx`-th element in the array
+    pub fn update(&mut self, idx: usize, val: i32) {
+        // the `idx` child node is not a descendant of the current node
+        if self.range.0 > idx || self.range.1 < idx {
+            return;
+        }
+        // base case: reach the leaf node
+        if self.range.0 == self.range.1 && self.range.0 == idx {
+            self.max_sums = vec![max(0, val), 0, 0, 0];
+            return;
+        }
+        // update the left or right child node
+        let mid = (self.range.0 + self.range.1) / 2;
+        if idx <= mid {
+            // update the left child node
+            self.left.as_mut().unwrap().update(idx, val);
+        } else {
+            // update the right child node
+            self.right.as_mut().unwrap().update(idx, val);
+        }
+        // update the current node
+        self.max_sums =
+            compute_max_sums(&self.left.as_ref().unwrap(), &self.right.as_ref().unwrap());
+    }
 }
 
-/// Change `nums[query[0]]` to `query[1]`
-fn modify_nums(nums: &mut Vec<i32>, query: &Vec<i32>) {
-    let (idx, val) = (query[0] as usize, query[1]);
-    nums[idx] = val;
+/// Compute `max_sums` of the current node
+fn compute_max_sums(left: &TreeNode, right: &TreeNode) -> Vec<i32> {
+    // to calculate the `max_sums[0]` of the current node,
+    // there are three cases:
+    // 1. [] + (]  (`left.max_sums[0] + right.max_sums[2]`)
+    // 2. [) + (]  (`left.max_sums[1] + right.max_sums[2]`)
+    // 3. [) + []  (`left.max_sums[1] + right.max_sums[0]`)
+    let case_0 = left.max_sums[0] + right.max_sums[2];
+    let case_1 = left.max_sums[1] + right.max_sums[2];
+    let case_2 = left.max_sums[1] + right.max_sums[0];
+    let max_sum_0 = max(max(case_0, case_1), case_2);
+
+    // to calculate the `max_sums[1]` of the current node,
+    // there are three cases:
+    // 1. [] + ()  (`left.max_sums[0] + right.max_sums[3]`)
+    // 2. [) + ()  (`left.max_sums[1] + right.max_sums[3]`)
+    // 3. [) + [)  (`left.max_sums[1] + right.max_sums[1]`)
+    let case_0 = left.max_sums[0] + right.max_sums[3];
+    let case_1 = left.max_sums[1] + right.max_sums[3];
+    let case_2 = left.max_sums[1] + right.max_sums[1];
+    let max_sum_1 = max(max(case_0, case_1), case_2);
+
+    // to calculate the `max_sums[2]` of the current node,
+    // there are three cases:
+    // 1. () + []  (`left.max_sums[3] + right.max_sums[0]`)
+    // 2. () + (]  (`left.max_sums[3] + right.max_sums[2]`)
+    // 3. (] + (]  (`left.max_sums[2] + right.max_sums[2]`)
+    let case_0 = left.max_sums[3] + right.max_sums[0];
+    let case_1 = left.max_sums[3] + right.max_sums[2];
+    let case_2 = left.max_sums[2] + right.max_sums[2];
+    let max_sum_2 = max(max(case_0, case_1), case_2);
+
+    // to calculate the `max_sums[3]` of the current node,
+    // there are three cases:
+    // 1. () + ()  (`left.max_sums[3] + right.max_sums[3]`)
+    // 2. () + [)  (`left.max_sums[3] + right.max_sums[1]`)
+    // 3. (] + ()  (`left.max_sums[2] + right.max_sums[3]`)
+    let case_0 = left.max_sums[3] + right.max_sums[3];
+    let case_1 = left.max_sums[3] + right.max_sums[1];
+    let case_2 = left.max_sums[2] + right.max_sums[3];
+    let max_sum_3 = max(max(case_0, case_1), case_2);
+
+    vec![max_sum_0, max_sum_1, max_sum_2, max_sum_3]
 }
 
-/// For each query, modify the `nums` array and
-/// calculate the maximum subsequence sum with no adjacent elements
-/// Return the sum of all maximum subsequence sums
+/// Update the segment tree for each query and
+/// sum up the maximum subsequence sum of each range
 fn solution(nums: Vec<i32>, queries: Vec<Vec<i32>>) -> i32 {
-    // for each point in `queries`, modify the `nums` array
-    // then calculate the maximum subsequence sum with no adjacent elements
     let mut res = 0;
-    let mut nums = nums;
-    let mut cache = Cache::new();
+    let mut root = TreeNode::construct(&nums, 0, nums.len() - 1);
     for query in queries {
-        // delete key >= query[0] from cache, they are no longer valid
-        cache.retain(|&k, _| k < query[0]);
-        modify_nums(&mut nums, &query);
-        let max_sum = max_subseq_sum_no_adjacent(&nums, nums.len() as i32 - 1, &mut cache);
-        res += max_sum;
+        root.update(query[0] as usize, query[1]);
+        res += root.query();
+        res %= 1_000_000_007;
     }
     res
 }
@@ -80,31 +139,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_max_subseq_sum() {
-        let nums = vec![-2, 1, -3, 4, -1, 2, 1, -5, 4];
-        let mut cache = Cache::new();
-        let max_sum = max_subseq_sum(&nums, nums.len() as i32 - 1, &mut cache);
-        assert_eq!(max_sum, 12);
+    fn test_tree_node_construct() {
+        let nums = vec![3, 5, 9];
+        let root = TreeNode::construct(&nums, 0, nums.len() - 1);
+        assert_eq!(root.query(), 12);
+        let nums = vec![3, -2, 9];
+        let root = TreeNode::construct(&nums, 0, nums.len() - 1);
+        assert_eq!(root.query(), 12);
+        let nums = vec![-3, -2, 9];
+        let root = TreeNode::construct(&nums, 0, nums.len() - 1);
+        assert_eq!(root.query(), 9);
     }
 
     #[test]
-    fn test_max_subseq_sum_no_adjacent() {
-        let nums = vec![3, 2, 5, 20, 7];
-        let mut cache = Cache::new();
-        let max_sum = max_subseq_sum_no_adjacent(&nums, nums.len() as i32 - 1, &mut cache);
-        assert_eq!(max_sum, 23);
-    }
-
-    #[test]
-    fn test_modify_nums() {
-        let mut nums = vec![3, 2, 5, 20, 7];
-        let query = vec![2, 10];
-        modify_nums(&mut nums, &query);
-        assert_eq!(nums, vec![3, 2, 10, 20, 7]);
-    }
-
-    #[test]
-    fn test_solution_1() {
+    fn test_tree_update_1() {
         let nums = vec![3, 5, 9];
         let queries = vec![vec![1, -2], vec![0, -3]];
         let res = solution(nums, queries);
@@ -112,10 +160,12 @@ mod tests {
     }
 
     #[test]
-    fn test_solution_2() {
+    fn test_tree_update_2() {
         let nums = vec![0, -1];
         let queries = vec![vec![0, -5]];
         let res = solution(nums, queries);
         assert_eq!(res, 0);
     }
 }
+
+fn main() {}
