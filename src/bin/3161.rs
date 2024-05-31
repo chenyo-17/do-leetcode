@@ -1,128 +1,123 @@
 #![allow(dead_code)]
 
+use std::cmp::max;
+use std::cmp::min;
+
 struct Solution {}
 pub fn main() {}
 
-/// Use a segment tree to store the obstacle ranges.
+/// Use a segment tree to maintain the maximum block length
+/// can be placed in a range.
+/// E.g., if the range is [0, 5], then `max_len` stores the
+/// maximum block length that starts at 1, 2,..5.
+#[derive(Clone)]
 struct TreeNode {
     range: (usize, usize),
+    max_len: usize,
     left: Option<Box<TreeNode>>,
     right: Option<Box<TreeNode>>,
 }
 
 impl TreeNode {
-    // construct an empty tree root
-    pub fn empty_root() -> Self {
-        TreeNode {
-            range: (0, std::usize::MAX),
-            left: None,
-            right: None,
+    // construct a new segment tree for the given max range `MAX_RANGE`
+    // no obstacle is inserted, so `max_len = MAX_RANGE` for all nodes
+    pub fn construct(left: usize, right: usize, max_range: usize) -> Self {
+        // reach the leaf node
+        if left == right {
+            return Self {
+                range: (left, right),
+                max_len: max_range - left,
+                left: None,
+                right: None,
+            };
+        }
+        let mid = (left + right) / 2;
+        let left_c = Self::construct(left, mid, max_range);
+        let right_c = Self::construct(mid + 1, right, max_range);
+        Self {
+            range: (left, right),
+            max_len: max(left_c.max_len, right_c.max_len),
+            left: Some(Box::new(left_c)),
+            right: Some(Box::new(right_c)),
         }
     }
 
-    // Check if the node is a leaf node
+    // whether the node is a leaf node
     fn is_leaf(&self) -> bool {
         self.left.is_none() && self.right.is_none()
     }
 
-    // check whether the value is covered by the range
-    fn cover_val(&self, val: usize) -> bool {
-        self.range.0 <= val && val <= self.range.1
-    }
-
-    // Insert an obstacle value into the tree
-    pub fn insert(&mut self, val: usize) {
-        // find the leaf node to insert the value
-        if self.is_leaf() {
-            // insert the value
-            let left = Self {
-                range: (self.range.0, val),
-                left: None,
-                right: None,
-            };
-            let right = Self {
-                range: (val, self.range.1),
-                left: None,
-                right: None,
-            };
-            self.left = Some(Box::new(left));
-            self.right = Some(Box::new(right));
-            return;
-        }
-        if self.cover_val(val) {
-            // recursively insert the value to the left or right child
-            if self.left.as_ref().unwrap().cover_val(val) {
-                self.left.as_mut().unwrap().insert(val);
-            } else {
-                self.right.as_mut().unwrap().insert(val);
+    // Insert an obstacle value and update the tree
+    // this should be called on the root node
+    pub fn insert_obstacle(&mut self, pos: usize) {
+        // base case: reach the leaf node
+        if self.range.0 == self.range.1 {
+            // if the point is before the obstacle,
+            // it may need to update the `max_len`
+            if self.range.0 < pos {
+                self.max_len = min(self.max_len, pos - self.range.0);
             }
             return;
         }
-    }
-}
-
-// An iterator to traverse the leaf nodes of the tree
-struct TreeNodeIter<'a> {
-    stack: Vec<&'a TreeNode>,
-}
-
-impl<'a> TreeNodeIter<'a> {
-    // Create a new iterator with the root node
-    fn new(root: &'a TreeNode) -> Self {
-        let mut stack = Vec::new();
-        stack.push(root);
-        Self { stack }
-    }
-}
-
-impl Iterator for TreeNodeIter<'_> {
-    type Item = (usize, usize);
-
-    // The traversal is a DFS order
-    fn next(&mut self) -> Option<Self::Item> {
-        while let Some(node) = self.stack.pop() {
-            if node.is_leaf() {
-                return Some(node.range);
+        // if the obstacle is behind `self.range.0`,
+        // it may need to update the `max_len`
+        if pos > self.range.0 {
+            // recursively update child nodes
+            if pos > self.left.as_ref().unwrap().range.0 {
+                // update the left child node
+                self.left.as_mut().unwrap().insert_obstacle(pos);
             }
-            if let Some(right) = &node.right {
-                self.stack.push(right);
+            if pos > self.right.as_ref().unwrap().range.0 {
+                // update the right child node
+                self.right.as_mut().unwrap().insert_obstacle(pos);
             }
-            if let Some(left) = &node.left {
-                self.stack.push(left);
-            }
+            // update the `max_len` of the current node
+            self.max_len = max(
+                self.left.as_ref().unwrap().max_len,
+                self.right.as_ref().unwrap().max_len,
+            );
         }
-        None
+    }
+
+    /// Whether the block of size `sz` can be placed at position between 0 and `x`
+    /// This should be called on the root node
+    pub fn query(&self, x: usize, sz: usize) -> bool {
+        // virtually insert the obstacle at `x`
+        // TODO: this is expensive!
+        let mut new_root = self.clone();
+        new_root.insert_obstacle(x);
+        new_root._query(x, sz)
+    }
+
+    fn _query(&self, x: usize, sz: usize) -> bool {
+        // base case: the current range is before x
+        if self.range.1 < x {
+            return self.max_len >= sz;
+        }
+        if self.range.0 >= x {
+            // cannot be placed
+            return false;
+        }
+        // if the current range covers x, then recursively query the child nodes
+        self.left.as_ref().unwrap().query(x, sz) || self.right.as_ref().unwrap().query(x, sz)
     }
 }
 
 impl Solution {
     pub fn get_results(queries: Vec<Vec<i32>>) -> Vec<bool> {
         let mut res = Vec::new();
-        let mut root = TreeNode::empty_root();
+        let max_range = 5 * 10_i32.pow(4) as usize;
+        let mut root = TreeNode::construct(0, max_range, max_range);
         for query in queries {
             let query_type = query[0];
             match query_type {
                 1 => {
-                    root.insert(query[1] as usize);
+                    root.insert_obstacle(query[1] as usize);
                 }
                 2 => {
-                    let mut iter = TreeNodeIter::new(&root);
-                    let mut found = false;
-                    while let Some((start, end)) = iter.next() {
-                        // reach the first obstacle that is behind query[1]
-                        if end > query[1] as usize {
-                            if query[1] as usize - start >= query[2] as usize {
-                                found = true;
-                                break;
-                            }
-                            break;
-                        }
-                        if end - start >= query[2] as usize {
-                            found = true;
-                            break;
-                        }
-                    }
-                    res.push(found);
+                    let x = query[1] as usize;
+                    let sz = query[2] as usize;
+                    res.push(root.query(x, sz));
                 }
                 _ => {}
             }
@@ -136,27 +131,84 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_insert() {
-        let mut root = TreeNode::empty_root();
-        root.insert(7);
-        root.insert(2);
-        let root_left = root.left.as_ref().unwrap();
-        assert_eq!(root_left.range, (0, 7));
-        assert_eq!(root.right.as_ref().unwrap().range, (7, std::usize::MAX));
-        assert_eq!(root_left.left.as_ref().unwrap().range, (0, 2));
-        assert_eq!(root_left.right.as_ref().unwrap().range, (2, 7));
+    fn test_construct() {
+        let max_range = 10;
+        let r = TreeNode::construct(0, max_range, max_range);
+        assert_eq!(r.max_len, max_range);
+        let l = r.left.as_ref().unwrap();
+        let r = r.right.as_ref().unwrap();
+        assert_eq!(l.max_len, max_range);
+        assert_eq!(r.max_len, 4);
+        let ll = l.left.as_ref().unwrap();
+        let lr = l.right.as_ref().unwrap();
+        assert_eq!(ll.max_len, max_range);
+        assert_eq!(lr.max_len, 7);
+        let rl = r.left.as_ref().unwrap();
+        let rr = r.right.as_ref().unwrap();
+        assert_eq!(rl.max_len, 4);
+        assert_eq!(rr.max_len, 1);
+        let lll = ll.left.as_ref().unwrap();
+        let llr = ll.right.as_ref().unwrap();
+        assert_eq!(lll.max_len, 10);
+        assert_eq!(llr.max_len, 8);
+        let lrl = lr.left.as_ref().unwrap();
+        let lrr = lr.right.as_ref().unwrap();
+        assert_eq!(lrl.max_len, 7);
+        assert_eq!(lrr.max_len, 5);
+        let rll = rl.left.as_ref().unwrap();
+        let rlr = rl.right.as_ref().unwrap();
+        assert_eq!(rll.max_len, 4);
+        assert_eq!(rlr.max_len, 2);
     }
 
     #[test]
-    fn test_iterator() {
-        let mut root = TreeNode::empty_root();
-        root.insert(7);
-        root.insert(2);
-        let mut iter = TreeNodeIter::new(&root);
-        assert_eq!(iter.next(), Some((0, 2)));
-        assert_eq!(iter.next(), Some((2, 7)));
-        assert_eq!(iter.next(), Some((7, std::usize::MAX)));
-        assert_eq!(iter.next(), None);
+    fn test_insert() {
+        let max_range = 10;
+        let mut root = TreeNode::construct(0, max_range, max_range);
+        root.insert_obstacle(7);
+        assert_eq!(root.max_len, 7);
+        let l = root.left.as_ref().unwrap();
+        let r = root.right.as_ref().unwrap();
+        assert_eq!(l.max_len, 7);
+        assert_eq!(r.max_len, 3);
+        let ll = l.left.as_ref().unwrap();
+        let lr = l.right.as_ref().unwrap();
+        assert_eq!(ll.max_len, 7);
+        assert_eq!(lr.max_len, 4);
+        let rl = r.left.as_ref().unwrap();
+        let rr = r.right.as_ref().unwrap();
+        assert_eq!(rl.max_len, 3);
+        assert_eq!(rr.max_len, 1);
+        let lll = ll.left.as_ref().unwrap();
+        let llr = ll.right.as_ref().unwrap();
+        assert_eq!(lll.max_len, 7);
+        assert_eq!(llr.max_len, 5);
+        let rll = rl.left.as_ref().unwrap();
+        let rlr = rl.right.as_ref().unwrap();
+        assert_eq!(rll.max_len, 3);
+        assert_eq!(rlr.max_len, 2);
+        let rlll = rll.left.as_ref().unwrap();
+        let rllr = rll.right.as_ref().unwrap();
+        assert_eq!(rlll.max_len, 1);
+        assert_eq!(rllr.max_len, 3);
+        root.insert_obstacle(2);
+        assert_eq!(root.max_len, 5);
+        let l = root.left.as_ref().unwrap();
+        let r = root.right.as_ref().unwrap();
+        assert_eq!(l.max_len, 5);
+        assert_eq!(r.max_len, 3);
+    }
+
+    #[test]
+    fn test_query() {
+        let max_range = 10;
+        let mut r = TreeNode::construct(0, max_range, max_range);
+        r.insert_obstacle(7);
+        assert_eq!(r.query(5, 4), true);
+        assert_eq!(r.query(10, 8), false);
+        r.insert_obstacle(2);
+        assert_eq!(r.query(5, 4), false);
+        assert_eq!(r.query(6, 3), true);
     }
 
     #[test]
